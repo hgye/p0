@@ -10,8 +10,8 @@ import(
 	// "runtime/debug"
 )
 
-type connectClient struct{
-	conn net.Conn
+type clientInfo struct{
+	conn *net.Conn
 	ch chan []byte
 	reader *bufio.Reader
 	writer *bufio.Writer
@@ -21,7 +21,7 @@ type multiEchoServer struct {
 	// TODO: implement this!
 	listener net.Listener
 	port int
-	client connectClient
+	client []clientInfo
 	counts int
 }
 
@@ -30,7 +30,7 @@ func New() MultiEchoServer {
 	// TODO: implement this!
 	s := new(multiEchoServer)
 
-	s.client.ch = make(chan []byte)
+	// s.client.ch = make(chan []byte)
 
 	return s
 }
@@ -50,21 +50,17 @@ func (mes *multiEchoServer) Start(port int) error {
 
 	go func() error {
 		for {
-			fmt.Println("Waiting for inbound connection")
+			// fmt.Println("Waiting for inbound connection")
 			conn, err := mes.listener.Accept()
 			if err != nil {
 				fmt.Println("Couldn't accept: ", err)
 				return err
 			}
 
-			mes.client.conn = conn
+			mes.clientRegister(conn)
 
-			mes.counts++
-			mes.client.reader = bufio.NewReader(conn)
-			mes.client.writer = bufio.NewWriter(mes.client.conn)
-
-			go mes.handleConn()
-			go mes.sendBackMsg(conn)
+			go mes.readFromCli()
+			go mes.broadCastMsg()
 		}
 	}()
 
@@ -83,48 +79,65 @@ func (mes *multiEchoServer) Count() int {
 
 // TODO: add additional methods/functions below!
 
-func (mes *multiEchoServer) handleConn() error { //  conn net.Conn
-	fmt.Println("Reading from connection")
+func (mes *multiEchoServer) clientRegister(c net.Conn) error { //  conn net.Conn
 
-	for {
-		line, err := mes.client.reader.ReadBytes('\n')
+	fmt.Println("new client register")
 
-		if err != nil {
-			return err
-		}
+	mes.counts++
 
-		mes.client.ch <- line
+	mes.client = append(mes.client, clientInfo{
+		conn: &c,
+		reader: bufio.NewReader(c),
+		writer: bufio.NewWriter(c),
+		ch: make(chan []byte, 20),
+	})
 
-	}
+	fmt.Println("client is mes.client", mes.client)
 
-	// return nil
+	return nil
 }
 
-
-func (mes *multiEchoServer) sendBackMsg(c net.Conn) error {
-	//var line []byte
-
+func (mes *multiEchoServer) readFromCli() {
 	for {
-		// fmt.Println("sending out message")
+		for _, c := range mes.client {
+			// fmt.Println("+++++++++", c)
+			line, err := c.reader.ReadBytes('\n')
 
-		line := <- mes.client.ch
-		// line = append(line, '\n')
-		_, err := c.Write(line)
-		fmt.Println("len of line is", len(line))
-		// _, err := fmt.Fprint(mes.client.writer, line)
-
-		fmt.Println("oops:", string(line[:]) )
-		if err != nil {
-			fmt.Println("error on writing", err)
-			return err
+			if err != nil {
+				// (*(c.conn)).Close()
+				fmt.Println("in readFromCli err:", err)
+				continue
+			}
+			// fmt.Println("oops+++:", string(line[:]) )
+			for _, c1 := range mes.client {
+				c1.ch <- line
+			}
 		}
-
-		//io.Copy(mes.client.writer, mes.client.conn)
-
-		err = mes.client.writer.Flush()
-		if err != nil {
-			return err
 	}
+}
+
+func (mes *multiEchoServer) broadCastMsg() error {
+	for {
+		for _, c := range mes.client {
+			line := <- c.ch
+			// line = append(line, '\n')
+			_, err := (*(c.conn)).Write(line)
+			// fmt.Println("len of line is", len(line))
+			//_, err := fmt.Fprint(c.writer, line)
+
+
+			if err != nil {
+				fmt.Println("error on writing", err)
+				break
+			}
+
+			// fmt.Println("oops:", string(line[:]) )
+			// err = c.writer.Flush()
+			// if err != nil {
+			// 	return err
+			// }
+
+		}
 
 	}
 	return nil

@@ -1,4 +1,5 @@
 // Implementation of a MultiEchoServer. Students should write their code in this file.
+// basicly ref: https://gist.github.com/drewolson/3950226
 
 package p0
 
@@ -7,40 +8,38 @@ import (
 	"fmt"
 	"net"
 	"strconv"
-	// "runtime/debug"
 )
 
-type nwEvent struct {
-	cli      *clientInfo // The client that received a network event.
-	readMsg  string      // The message read from the network.
-	writeMsg string      // The message to write to the network.
-	err      error       // Notifies us that an error has occurred (if non-nil).
-}
-
-type clientInfo struct {
-	id   int
-	conn net.Conn
-	//ch     chan []byte
-	reader *bufio.Reader
-	writer *bufio.Writer
+type client struct {
+	id       int
+	conn     net.Conn
+	readMsg  chan string // The message read from the network.
+	writeMsg chan string // The message to write to the network.
+	reader   *bufio.Reader
+	writer   *bufio.Writer
 }
 
 type multiEchoServer struct {
 	// TODO: implement this!
-	listener net.Listener
 	port     int
-	client   []clientInfo
+	listener net.Listener
+
+	clients  []client
+	join     chan net.Conn
+	readMsg  chan string
+	writeMsg chan string
 	counts   int
 }
 
 // New creates and returns (but does not start) a new MultiEchoServer.
 func New() MultiEchoServer {
 	// TODO: implement this!
+
 	s := new(multiEchoServer)
 
-	// s.registerChan = make(chan int)
-
-	// s.client.ch = make(chan []byte)
+	s.join = make(chan net.Conn)
+	s.readMsg = make(chan string)
+	s.writeMsg = make(chan string)
 
 	return s
 }
@@ -68,9 +67,15 @@ func (mes *multiEchoServer) Start(port int) error {
 				continue
 			}
 
-			mes.clientJoin(conn)
+			// mes.clientJoin(conn)
+
+			mes.counts++
+			mes.join <- conn
+
 		}
 	}()
+
+	go mes.run()
 
 	return nil
 }
@@ -90,79 +95,78 @@ func (mes *multiEchoServer) Count() int {
 func (mes *multiEchoServer) clientJoin(c net.Conn) { //  conn net.Conn
 
 	fmt.Println("new client register")
+	// mes.counts++
 
-	mes.counts++
-
-	mes.client = append(mes.client, clientInfo{
-		conn:   c,
-		reader: bufio.NewReader(c),
-		writer: bufio.NewWriter(c),
-		// ch:     make(chan []byte, 20),
+	readChan, writeChan := make(chan string), make(chan string, 100)
+	mes.clients = append(mes.clients, client{
+		conn:     c,
+		reader:   bufio.NewReader(c),
+		writer:   bufio.NewWriter(c),
+		readMsg:  readChan,
+		writeMsg: writeChan,
 	})
 
-	// cli := mes.client[len(mes.client)-1]
-	rc := make(chan *nwEvent)
-	go mes.startReadFromCli(rc)
-	go mes.startBroadCastMsg(rc)
-
-	fmt.Println("client is mes.client", mes.client)
-
+	cli := mes.clients[len(mes.clients)-1]
+	// fmt.Println("client is mes.client", mes.clients)
+	go cli.run(mes)
 }
 
-func (mes *multiEchoServer) startReadFromCli(readChan chan<- *nwEvent) {
+func (mes multiEchoServer) run() {
 	for {
-		for _, cli := range mes.client {
-			cli := cli
-			fmt.Println("+++++++++", cli)
+		select {
+		case conn := <-mes.join:
+			mes.clientJoin(conn)
 
-			line, err := cli.reader.ReadBytes('\n')
+		case msg := <-mes.readMsg:
 
-			if err != nil {
-				// (*(c.conn)).Close()
-				readChan <- &nwEvent{err: err}
-				fmt.Println("in readFromCli err:", err)
-				return
+			for _, c := range mes.clients {
+				c.writeMsg <- msg
+
 			}
 
-			readChan <- &nwEvent{
-				cli:     &cli,
-				readMsg: string(line),
-			}
-
-			// fmt.Println("oops+++:", string(line[:]) )
+		default:
 		}
 	}
 }
 
-func (mes *multiEchoServer) startBroadCastMsg(readChan <-chan *nwEvent) {
+func (c client) run(mes *multiEchoServer) {
+	go c.read()
+	go c.write()
+
 	for {
 		select {
-		case event := <-readChan:
-			for _, cli := range mes.client {
+		case msg := <-c.readMsg:
 
-				_, msg := event.cli, event.readMsg
+			mes.readMsg <- msg
 
-				if event.err != nil {
-					continue
-				}
-				// line = append(line, '\n')
-				_, err := cli.conn.Write([]byte(msg))
-				// fmt.Println("len of line is", len(line))
-				//_, err := fmt.Fprint(c.writer, line)
-
-				if err != nil {
-					fmt.Println("error on writing", err)
-					break
-				}
-
-				// fmt.Println("oops:", string(line[:]) )
-				// err = c.writer.Flush()
-				// if err != nil {
-				// 	return err
-				// }
-
-			}
 		default:
+		}
+	}
+}
+
+func (c client) read() {
+	for {
+		msg, err := c.reader.ReadBytes('\n')
+
+		if err != nil {
+			return
+		}
+
+		c.readMsg <- string(msg)
+	}
+}
+
+func (c client) write() {
+	for {
+		for data := range c.writeMsg {
+			_, err := c.writer.WriteString(data)
+			// fmt.Println("data is ", data)
+
+			if err != nil {
+				return
+			}
+
+			c.writer.Flush()
 		}
 	}
 }

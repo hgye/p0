@@ -2,17 +2,25 @@
 
 package p0
 
-import(
+import (
+	"bufio"
 	"fmt"
 	"net"
 	"strconv"
-	"bufio"
 	// "runtime/debug"
 )
 
-type clientInfo struct{
-	conn *net.Conn
-	ch chan []byte
+type nwEvent struct {
+	cli      *clientInfo // The client that received a network event.
+	readMsg  string      // The message read from the network.
+	writeMsg string      // The message to write to the network.
+	err      error       // Notifies us that an error has occurred (if non-nil).
+}
+
+type clientInfo struct {
+	id   int
+	conn net.Conn
+	//ch     chan []byte
 	reader *bufio.Reader
 	writer *bufio.Writer
 }
@@ -20,15 +28,17 @@ type clientInfo struct{
 type multiEchoServer struct {
 	// TODO: implement this!
 	listener net.Listener
-	port int
-	client []clientInfo
-	counts int
+	port     int
+	client   []clientInfo
+	counts   int
 }
 
 // New creates and returns (but does not start) a new MultiEchoServer.
 func New() MultiEchoServer {
 	// TODO: implement this!
 	s := new(multiEchoServer)
+
+	// s.registerChan = make(chan int)
 
 	// s.client.ch = make(chan []byte)
 
@@ -48,19 +58,17 @@ func (mes *multiEchoServer) Start(port int) error {
 
 	mes.listener = ln
 
-	go func() error {
+	go func() {
+
 		for {
 			// fmt.Println("Waiting for inbound connection")
 			conn, err := mes.listener.Accept()
 			if err != nil {
 				fmt.Println("Couldn't accept: ", err)
-				return err
+				continue
 			}
 
-			mes.clientRegister(conn)
-
-			go mes.readFromCli()
-			go mes.broadCastMsg()
+			mes.clientJoin(conn)
 		}
 	}()
 
@@ -79,66 +87,82 @@ func (mes *multiEchoServer) Count() int {
 
 // TODO: add additional methods/functions below!
 
-func (mes *multiEchoServer) clientRegister(c net.Conn) error { //  conn net.Conn
+func (mes *multiEchoServer) clientJoin(c net.Conn) { //  conn net.Conn
 
 	fmt.Println("new client register")
 
 	mes.counts++
 
 	mes.client = append(mes.client, clientInfo{
-		conn: &c,
+		conn:   c,
 		reader: bufio.NewReader(c),
 		writer: bufio.NewWriter(c),
-		ch: make(chan []byte, 20),
+		// ch:     make(chan []byte, 20),
 	})
+
+	// cli := mes.client[len(mes.client)-1]
+	rc := make(chan *nwEvent)
+	go mes.startReadFromCli(rc)
+	go mes.startBroadCastMsg(rc)
 
 	fmt.Println("client is mes.client", mes.client)
 
-	return nil
 }
 
-func (mes *multiEchoServer) readFromCli() {
+func (mes *multiEchoServer) startReadFromCli(readChan chan<- *nwEvent) {
 	for {
-		for _, c := range mes.client {
-			// fmt.Println("+++++++++", c)
-			line, err := c.reader.ReadBytes('\n')
+		for _, cli := range mes.client {
+			cli := cli
+			fmt.Println("+++++++++", cli)
+
+			line, err := cli.reader.ReadBytes('\n')
 
 			if err != nil {
 				// (*(c.conn)).Close()
+				readChan <- &nwEvent{err: err}
 				fmt.Println("in readFromCli err:", err)
-				continue
+				return
 			}
+
+			readChan <- &nwEvent{
+				cli:     &cli,
+				readMsg: string(line),
+			}
+
 			// fmt.Println("oops+++:", string(line[:]) )
-			for _, c1 := range mes.client {
-				c1.ch <- line
-			}
 		}
 	}
 }
 
-func (mes *multiEchoServer) broadCastMsg() error {
+func (mes *multiEchoServer) startBroadCastMsg(readChan <-chan *nwEvent) {
 	for {
-		for _, c := range mes.client {
-			line := <- c.ch
-			// line = append(line, '\n')
-			_, err := (*(c.conn)).Write(line)
-			// fmt.Println("len of line is", len(line))
-			//_, err := fmt.Fprint(c.writer, line)
+		select {
+		case event := <-readChan:
+			for _, cli := range mes.client {
 
+				_, msg := event.cli, event.readMsg
 
-			if err != nil {
-				fmt.Println("error on writing", err)
-				break
+				if event.err != nil {
+					continue
+				}
+				// line = append(line, '\n')
+				_, err := cli.conn.Write([]byte(msg))
+				// fmt.Println("len of line is", len(line))
+				//_, err := fmt.Fprint(c.writer, line)
+
+				if err != nil {
+					fmt.Println("error on writing", err)
+					break
+				}
+
+				// fmt.Println("oops:", string(line[:]) )
+				// err = c.writer.Flush()
+				// if err != nil {
+				// 	return err
+				// }
+
 			}
-
-			// fmt.Println("oops:", string(line[:]) )
-			// err = c.writer.Flush()
-			// if err != nil {
-			// 	return err
-			// }
-
+		default:
 		}
-
 	}
-	return nil
 }

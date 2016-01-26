@@ -19,7 +19,7 @@ type dataX struct {
 type client struct {
 	id       int
 	conn     net.Conn
-	readMsg  chan dataX // The message read from the network.
+	//readMsg  chan dataX // The message read from the network.
 	writeMsg chan dataX // The message to write to the network.
 	reader   *bufio.Reader
 	writer   *bufio.Writer
@@ -46,7 +46,7 @@ func New() MultiEchoServer {
 
 	s.join = make(chan net.Conn, 100)
 	s.leave = make(chan dataX, 100)
-	s.readChan = make(chan dataX, 100)
+	s.readChan = make(chan dataX, 1000)
 	s.writeChan = make(chan dataX, 100)
 
 	return s
@@ -104,19 +104,20 @@ func (mes *multiEchoServer) clientJoin(c net.Conn) { //  conn net.Conn
 	// fmt.Println("new client register")
 	mes.counts++
 
-	readChan, writeChan := make(chan dataX, 10), make(chan dataX, 10)
+	//readMsg, writeMsg := make(chan dataX, 100), make(chan dataX, 10)
+	writeMsg :=  make(chan dataX, 10)
 
 	mes.clients = append(mes.clients, client{
 		conn:     c,
 		reader:   bufio.NewReader(c),
 		writer:   bufio.NewWriter(c),
-		readMsg:  readChan,
-		writeMsg: writeChan,
+		//readMsg:  readMsg,
+		writeMsg: writeMsg,
 	})
 
 	cli := mes.clients[len(mes.clients)-1]
 	// fmt.Println("client is mes.client", mes.clients)
-	go cli.run(mes)
+	cli.run(mes)
 }
 
 func (mes *multiEchoServer) clientLeave(c *client) {
@@ -134,10 +135,10 @@ func (mes *multiEchoServer) run() {
 	for {
 		select {
 		case conn := <-mes.join:
-			mes.clientJoin(conn)
+			go mes.clientJoin(conn)
 		case cmd := <-mes.leave:
 			c := cmd.c
-			mes.clientLeave(c)
+			go mes.clientLeave(c)
 
 		case cmd := <-mes.readChan:
 			msg, err, c := cmd.msg, cmd.err, cmd.c
@@ -160,32 +161,37 @@ func (mes *multiEchoServer) run() {
 }
 
 func (c *client) run(mes *multiEchoServer) {
-	go c.read()
+	go c.read(mes)
 	go c.write()
 
-	for {
-		select {
-		case cmd := <-c.readMsg:
-			//msg, err := cmd.msg, cmd.err
-			mes.readChan <- cmd
+	// for {
+	// 	//mes.readChan = c.readMsg
 
-		default:
-		}
-	}
+	// 	 select {
+	// 	 case cmd := <-c.readMsg:
+	// 	 	//msg, err := cmd.msg, cmd.err
+	// 	 	mes.readChan <- cmd
+
+	// 	 default:
+	// 	 }
+	// }
+
 }
 
-func (c *client) read() {
+func (c *client) read(mes *multiEchoServer) {
 	for {
 		msg, err := c.reader.ReadBytes('\n')
 
 		if err != nil {
 			// fmt.Println("client read err", err)
-			c.readMsg <- dataX{err: err,
+			//c.readMsg <- dataX{err: err,
+			//	c: c}
+			mes.readChan <- dataX{err: err,
 				c: c}
 			return
 		}
 
-		c.readMsg <- dataX{msg: string(msg)}
+		mes.readChan <- dataX{msg: string(msg)}
 	}
 }
 

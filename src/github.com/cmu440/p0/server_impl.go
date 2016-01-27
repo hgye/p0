@@ -46,7 +46,7 @@ func New() MultiEchoServer {
 
 	s.join = make(chan net.Conn, 100)
 	s.leave = make(chan dataX, 100)
-	s.readChan = make(chan dataX, 1000)
+	s.readChan = make(chan dataX, 100)
 	s.writeChan = make(chan dataX, 100)
 
 	return s
@@ -105,7 +105,7 @@ func (mes *multiEchoServer) clientJoin(c net.Conn) { //  conn net.Conn
 	mes.counts++
 
 	//readMsg, writeMsg := make(chan dataX, 100), make(chan dataX, 10)
-	writeMsg :=  make(chan dataX, 10)
+	writeMsg :=  make(chan dataX, 100)
 
 	mes.clients = append(mes.clients, client{
 		conn:     c,
@@ -150,9 +150,14 @@ func (mes *multiEchoServer) run() {
 				continue
 			}
 
-			for _, c := range mes.clients {
-				c.writeMsg <- dataX{msg: msg}
-
+			//for _, c := range mes.clients {
+			//	c.writeMsg <- dataX{msg: msg}
+			for range mes.clients {
+				mes.writeChan <- dataX{msg: msg }
+				//select{
+				//case mes.writeChan <- dataX{msg: msg} :
+				//default:
+				//}
 			}
 
 		default:
@@ -162,7 +167,7 @@ func (mes *multiEchoServer) run() {
 
 func (c *client) run(mes *multiEchoServer) {
 	go c.read(mes)
-	go c.write()
+	go c.write(mes)
 
 	// for {
 	// 	//mes.readChan = c.readMsg
@@ -195,16 +200,17 @@ func (c *client) read(mes *multiEchoServer) {
 	}
 }
 
-func (c *client) write() {
+func (c *client) write(mes *multiEchoServer) {
 	for {
-		for cmd := range c.writeMsg {
+		for cmd := range mes.writeChan {
 			data := cmd.msg
 			_, err := c.writer.WriteString(data)
 			// fmt.Println("data is ", data)
 
 			if err != nil {
 				fmt.Println("client write err", err)
-				return
+				continue
+				// return
 			}
 
 			c.writer.Flush()

@@ -17,10 +17,11 @@ type dataX struct {
 }
 
 type client struct {
-	id       int
-	conn     net.Conn
+	id   int
+	conn net.Conn
 	//readMsg  chan dataX // The message read from the network.
-	writeMsg chan dataX // The message to write to the network.
+	inputMsg chan string
+	writeMsg chan string // The message to write to the network.
 	reader   *bufio.Reader
 	writer   *bufio.Writer
 }
@@ -34,7 +35,7 @@ type multiEchoServer struct {
 	join      chan net.Conn
 	leave     chan dataX
 	readChan  chan dataX
-	writeChan chan dataX
+	// writeChan chan dataX
 	counts    int
 }
 
@@ -47,7 +48,7 @@ func New() MultiEchoServer {
 	s.join = make(chan net.Conn, 100)
 	s.leave = make(chan dataX, 100)
 	s.readChan = make(chan dataX, 100)
-	s.writeChan = make(chan dataX, 100)
+	// s.writeChan = make(chan dataX, 100)
 
 	return s
 }
@@ -104,14 +105,15 @@ func (mes *multiEchoServer) clientJoin(c net.Conn) { //  conn net.Conn
 	// fmt.Println("new client register")
 	mes.counts++
 
-	//readMsg, writeMsg := make(chan dataX, 100), make(chan dataX, 10)
-	writeMsg :=  make(chan dataX, 100)
+	inputMsg := make(chan string, 100)
+	writeMsg := make(chan string, 100)
 
 	mes.clients = append(mes.clients, client{
-		conn:     c,
-		reader:   bufio.NewReader(c),
-		writer:   bufio.NewWriter(c),
+		conn:   c,
+		reader: bufio.NewReader(c),
+		writer: bufio.NewWriter(c),
 		//readMsg:  readMsg,
+		inputMsg: inputMsg,
 		writeMsg: writeMsg,
 	})
 
@@ -136,6 +138,7 @@ func (mes *multiEchoServer) run() {
 		select {
 		case conn := <-mes.join:
 			go mes.clientJoin(conn)
+
 		case cmd := <-mes.leave:
 			c := cmd.c
 			go mes.clientLeave(c)
@@ -150,17 +153,14 @@ func (mes *multiEchoServer) run() {
 				continue
 			}
 
-			//for _, c := range mes.clients {
-			//	c.writeMsg <- dataX{msg: msg}
-			for range mes.clients {
-				mes.writeChan <- dataX{msg: msg }
-				//select{
-				//case mes.writeChan <- dataX{msg: msg} :
-				//default:
-				//}
+			for _, c := range mes.clients {
+				//go c.writeToMsg(msg) // <- dataX{msg: msg}
+				c := c
+				go func(){
+					c.writeMsg <- msg
+				}()
 			}
 
-		default:
 		}
 	}
 }
@@ -202,18 +202,23 @@ func (c *client) read(mes *multiEchoServer) {
 
 func (c *client) write(mes *multiEchoServer) {
 	for {
-		for cmd := range mes.writeChan {
-			data := cmd.msg
-			_, err := c.writer.WriteString(data)
-			// fmt.Println("data is ", data)
+		for data := range c.writeMsg{
+			//data := data
+			//go func(){
 
-			if err != nil {
-				fmt.Println("client write err", err)
-				continue
-				// return
-			}
+				_, err := c.writer.WriteString(data)
+				// fmt.Println("data is ", data)
 
-			c.writer.Flush()
+				if err != nil {
+					fmt.Println("client write err", err)
+					//continue
+					return
+				}
+
+
+				c.writer.Flush()
+
+			//}()
 		}
 	}
 }

@@ -1,7 +1,15 @@
 p0
 ==
 
-This repository contains the starter code that you will use as the basis of your multi-client
+## hgye Notes
+Obviously the tcp connect has buffer, so SlowClientTest can't pass in variously version in github.
+If I'm not wrong, buffer is 512 bytes for socket length. So the test design has problem.
+And the writer also notice this, just refer new [CMU440-s15](https://github.com/cmu440-F15/p0) for
+new test design.
+
+
+## Old Start
+
 echo server implementation. It also contains the tests that we will use to test your implementation,
 and an example 'server runner' binary that you might find useful for your own testing purposes.
 
